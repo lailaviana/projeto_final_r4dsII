@@ -1,0 +1,216 @@
+---
+title: "<span style='font-size: 60px'>Análise da base de dados IMDb</style>"
+author: "<span style='font-size: 22px'>Laila Viana de Almeida</style>"
+output: 
+    html_document:
+        highlight: textmate
+        theme: journal
+        number_sections: no
+        toc: yes
+        toc_float: 
+            collapsed: yes
+            smooth_scroll: no
+---
+
+```{css, echo = FALSE}
+h1{
+color: #e97575;
+font-size: 30px;
+}
+
+h2{
+color: #e97575;
+font-size: 22px;
+}
+
+p{
+color: black;
+font-size: 18px;
+}
+
+div {
+  text-align: justify;
+  text-justify: inter-word;
+}
+```
+  
+  
+  
+IMDb (*Internet Movie Data Base*) é uma base de dados disponível online que compila informações sobre cinema, TV, música e jogos. 
+
+Para realizar as análises do banco de dados IMDB e responder as perguntas do relatório, a primeira coisa a se fazer foi baixar as bases através do pacote basesCursoR.  
+```{r}
+imdb <- basesCursoR::pegar_base("imdb_completa")
+imdb_pessoas <- basesCursoR::pegar_base("imdb_pessoas")
+imdb_avaliacoes <- basesCursoR::pegar_base("imdb_avaliacoes")
+```
+Com as bases já baixadas no environment, carreguei os pacotes que irei utilizar nas análises. O pacote tidyverse será utilizado para manipulação geral dos dados, o lubridate para trabalhar com datas e o reactable para geração de tabelas.   
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(reactable)
+```
+
+# 1. Qual o mês do ano com o maior número de filmes? E o dia do ano?
+O mês do ano com maior número de filmes foi o mês de outubro, com 8734 filmes. Já o dia do ano com maior número de filmes foi o dia 1, com 7260 filmes.
+```{r, message=FALSE, warning=FALSE}
+imdb |> filter(!is.na(data_lancamento)) |>  
+  mutate(data = as_date(data_lancamento),
+                year = lubridate::year(data), 
+                month = lubridate::month(data), 
+                day = lubridate::day(data)) |> count(month) |> 
+  arrange(desc(n)) |> head(5) |> 
+  reactable(columns = list(
+    month = colDef(name = "Mês do Ano"),
+    n = colDef(name = "Número de Filmes")))
+
+
+imdb |> filter(!is.na(data_lancamento)) |>  
+  mutate(data = as_date(data_lancamento),
+                year = lubridate::year(data), 
+                month = lubridate::month(data), 
+                day = lubridate::day(data)) |> count(day) |> 
+  arrange(desc(n)) |> head(5) |> drop_na() |> 
+  reactable(columns = list(
+    day = colDef(name = "Dia do Mês"),
+    n = colDef(name = "Número de Filmes")))
+
+```
+
+
+# 2. Qual o top 5 países com mais filmes na base?
+O top 5 países com mais filmes na base foram: USA, França, Reino Unido, India e Itália.  
+```{r, message=FALSE, warning=FALSE}
+imdb |> separate_rows(pais, sep=", ") |> 
+  group_by(pais) |> summarise(n = n()) |> arrange(desc(n)) |> head(5) |> 
+  reactable(columns = list(
+    pais = colDef(name = "País"),
+    n = colDef(name = "Número de Filmes")))
+```
+
+# 3. Liste todas as moedas que aparecem nas colunas `orcamento` e `receita` da base `imdb_completa`.
+Apareceram 62 tipos diferentes de moedas nas colunas orçamento e receita. Elas estão listadas abaixo.  
+```{r, message=FALSE, warning=FALSE}
+imdb |> drop_na(orcamento, receita) |> select(orcamento, receita) |>
+  mutate(orcamento = str_replace(orcamento, "\\s.*$", ""),
+         receita = str_replace(orcamento, "\\s.*$", "")) |> unique() |> 
+  reactable(columns = list(
+    orcamento = colDef(name = "Moedas que aparecem em Orçamento"),
+    receita = colDef(name = "Moedas que aparecem em Receita")))
+```
+
+# 4. Considerando apenas orçamentos e receitas em dólar ($), qual o gênero com maior lucro? E com maior nota média?
+Como eu preciso calcular o lucro algumas vezes, resolvi criar uma função para realizar essa análise. A função está descrita a seguir:
+```{r, message=FALSE, warning=FALSE}
+calcular_lucro <- function(db) {
+  db |> drop_na(orcamento | receita) |> 
+    separate(receita, into = c("moeda_receita", "receita"), sep = " ") |>
+    separate(orcamento, into = c("moeda_orcamento", "orcamento"), sep = " ") |>
+    filter(moeda_receita == "$", moeda_orcamento == "$") |> 
+    mutate(across(c("receita", "orcamento"), as.numeric),
+           lucro = receita - orcamento)
+} 
+
+lucro_nota_media_genero <- calcular_lucro(imdb) |> 
+  separate_rows(genero, sep=", ") |> 
+  group_by(genero) |> summarise(lucro = sum(lucro),
+                                nota_media = mean(nota_imdb))
+
+
+```
+Considerando receitas e orçamentos em dólar, o gênero que apresentou o maior lucro foi o gênero aventura, enquanto o que apresentou maior nota média foi o film-noir, com a nota de 7.85.  
+```{r, message=FALSE, warning=FALSE}
+lucro_nota_media_genero |> arrange(desc(lucro)) |> head(5) |> 
+  mutate(lucro = scales::dollar(lucro)) |> select(genero, lucro) |> 
+  reactable(columns = list(genero = colDef(name = "Gênero do Filme"),
+    lucro = colDef(name = "Lucro Obtido")))
+```
+
+```{r, message=FALSE, warning=FALSE}
+lucro_nota_media_genero |> arrange(desc(nota_media)) |> head(5)  |> select(genero, nota_media) |> mutate(nota_media = round(nota_media, digits = 2)) |>   reactable(columns = list(
+    genero = colDef(name = "Gênero do Filme"),
+    nota_media = colDef(name = "Nota Média IMDB")))
+```
+
+# 5. Dentre os filmes na base `imdb_completa`, escolha o seu favorito. Então faça os itens a seguir:
+
+O filme favorito escolhido foi `Alice in Wonderland`, dirigido por `Tim Burton`.
+
+## a) Quem dirigiu o filme? Faça uma ficha dessa pessoa: idade (hoje em dia ou data de falecimento), onde nasceu, quantos filmes já dirigiu, qual o lucro médio dos filmes que dirigiu (considerando apenas valores em dólar) e outras informações que achar interessante (base `imdb_pessoas`).
+O filme foi dirigido por Tim Burton, ele nasceu em Burbank na Califórnia, mede 1,80m e nasceu no ano de 1958, tendo na data atual, 63 anos.  
+```{r, message=FALSE, warning=FALSE}
+imdb_pessoas |> mutate(data_nascimento = as_date(data_nascimento),
+                       idade = trunc((data_nascimento %--% Sys.Date()) / years(1))) |> 
+  filter(nome == "Tim Burton") |> select(nome, altura, data_nascimento, idade, local_nascimento)|> 
+  reactable(columns = list(
+    nome = colDef(name = "Nome"),
+    altura = colDef(name = "Altura"),
+    data_nascimento = colDef(name = "Data de Nascimento"),
+    idade = colDef(name = "Idade"),
+    local_nascimento= colDef(name = "Local de Nascimento")))
+```
+O Tim Burton possui 19 filmes como diretor. O nome dos filmes e a data de lançamento segue abaixo.  
+```{r, warning=FALSE, message=FALSE}
+tim_burtom_imdb <- imdb |> separate_rows(direcao, sep=", ") |>  
+  filter(direcao == "Tim Burton")
+
+tim_burtom_imdb |> select(titulo_original, direcao, data_lancamento) |> arrange(desc(data_lancamento)) |> reactable(columns = list(
+    titulo_original = colDef(name = "Título do Filme"),
+    direcao = colDef(name = "Diretor"),
+    data_lancamento = colDef(name = "Data de Lançamento")))
+```
+Com relação ao lucro médio dos filmes que ele dirigiu, o valor é $159,126,502.  
+```{r, warning=FALSE, message=FALSE}
+lucro_tim_burton <- tim_burtom_imdb |> calcular_lucro()
+lucro_tim_burton$lucro |> mean() |> scales::dollar()
+```
+
+## b) Qual a posição desse filme no ranking de notas do IMDB? E no ranking de lucro (considerando apenas valores em dólar)?
+O fime `Alice in Wonderland` está na posição 29 do ranking de notas do IMDB e na posição 51 do ranking de lucro considerando apenas valores em dólares.  
+```{r, message=FALSE, warning=FALSE}
+imdb |> calcular_lucro() |> filter(moeda_orcamento == "$", moeda_receita == "$")  |> mutate(ranking_nota = dense_rank(desc(nota_imdb)),
+         ranking_lucro = dense_rank(desc(lucro))) |>
+  filter(titulo == "Alice in Wonderland", direcao == "Tim Burton") |> 
+  select(titulo, direcao, ranking_nota, ranking_lucro) |> 
+  reactable(columns = list(
+    titulo = colDef(name = "Título"),
+    direcao = colDef(name = "Diretor"),
+    ranking_nota = colDef(name = "Ranking Nota"),
+    ranking_lucro = colDef(name = "Ranking Lucro")))
+```
+
+## c) Em que dia esse filme foi lançado? E dia da semana? Algum outro filme foi lançado no mesmo dia? Quantos anos você tinha nesse dia?
+O filme escolhido foi lançado no dia 03-03-2010, numa quarta-feira. Junto dele, foram lançados outros 4 filmes, que estão listados abaixo. Nessa data eu tinha 16 anos.  
+```{r, message=FALSE, warning=FALSE}
+imdb |> filter(titulo == "Alice in Wonderland", direcao == "Tim Burton") |> 
+  select(titulo, data_lancamento) |> mutate(dia_semana = weekdays(as_date(data_lancamento))) |> 
+  reactable(columns = list(
+    titulo = colDef(name = "Título"),
+    data_lancamento = colDef(name = "Data de Lançamento"),
+    dia_semana = colDef(name = "Dia da Semana")))
+
+imdb |> filter(data_lancamento == "2010-03-03") |>
+  filter(titulo_original != "Alice in Wonderland") |> 
+  select(titulo_original, direcao, data_lancamento) |> 
+  reactable(columns = list(
+    titulo_original = colDef(name = "Título do Filme"),
+    direcao = colDef(name = "Direção"),
+    data_lancamento = colDef(name = "Data de Lançamento")))
+
+data_lancamento_alice <- as_date("2010-03-03") 
+minha_data_nascimento <- as_date("1993-11-12")
+
+interval(minha_data_nascimento, data_lancamento_alice) |> as.period() |> year() 
+```
+
+## d) Faça um gráfico representando a distribuição da nota atribuída a esse filme por idade (base `imdb_avaliacoes`).
+É possível observar que as notas não variaram muito conforme a idade, se mantendo entre 6.4 e 6.7. A maior nota foi obtida pelo voto das idades de 0-18 anos enquanto a menor foi de pessoas de 30-45 anos.  
+```{r, message=FALSE, warning=FALSE, fig.align='center'}
+imdb_avaliacoes |> filter(id_filme == "tt1014759") |>  
+select(contains("nota_media_idade")) |> 
+  pivot_longer(everything(), 
+               names_to = "nome", 
+               values_to = c("nota")) |> mutate(across(nome, str_remove_all, pattern = ".*\\idade_")) |> ggplot(aes(x = nome, y = nota, fill = nome, label = nota)) + geom_col(show.legend = FALSE) + labs(x = "Idade", y = "Nota Média") + scale_fill_brewer(palette = "Accent") + theme_light() + ylim(0,10) + geom_text(size = 6)
+```
+
+
